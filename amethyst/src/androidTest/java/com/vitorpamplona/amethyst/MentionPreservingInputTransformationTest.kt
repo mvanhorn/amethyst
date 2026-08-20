@@ -25,6 +25,7 @@ package com.vitorpamplona.amethyst
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.text.input.TextFieldBuffer
 import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.ui.text.TextRange
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.vitorpamplona.amethyst.ui.actions.MentionPreservingInputTransformation
 import org.junit.Assert.assertEquals
@@ -55,6 +56,12 @@ class MentionPreservingInputTransformationTest {
         }
         return text.toString()
     }
+
+    private fun TextFieldState.backspace(): String =
+        applyChange {
+            val caret = selection.min
+            replace(caret - 1, caret, "")
+        }
 
     @Test
     fun mentionFreeText_passesThrough() {
@@ -141,5 +148,70 @@ class MentionPreservingInputTransformationTest {
         val state = TextFieldState("hello world this is plain text")
         val result = state.applyChange { replace(5, 11, "") }
         assertEquals("hello this is plain text", result)
+    }
+
+    @Test
+    fun staleLegacyImeBackspace_preservesEarlierSeparator() {
+        val state = TextFieldState("$npub hello world ")
+
+        state.backspace()
+        state.backspace()
+        val separator = "$npub hello".length
+        val result = state.applyChange { replace(separator, separator + 1, "") }
+
+        assertEquals("$npub hello worl", result)
+    }
+
+    @Test
+    fun staleLegacyImeBackspace_preservesArabicSeparator() {
+        val state = TextFieldState("$npub مرحبا بالعالم ")
+
+        state.backspace()
+        state.backspace()
+        val separator = "$npub مرحبا".length
+        val result = state.applyChange { replace(separator, separator + 1, "") }
+
+        assertEquals("$npub مرحبا العال", result)
+    }
+
+    @Test
+    fun adjacentSpaceBackspace_passesThrough() {
+        val state = TextFieldState("$npub hello ")
+        val result = state.backspace()
+        assertEquals("$npub hello", result)
+    }
+
+    @Test
+    fun selectedSeparatorDelete_passesThrough() {
+        val text = "$npub hello world"
+        val separator = "$npub hello".length
+        val state = TextFieldState(text, TextRange(separator, separator + 1))
+
+        val result = state.applyChange { replace(selection.min, selection.max, "") }
+
+        assertEquals("$npub helloworld", result)
+    }
+
+    @Test
+    fun selectedMultiWordDelete_passesThrough() {
+        val text = "$npub one two three"
+        val selectionStart = npub.length
+        val selectionEnd = "$npub one two".length
+        val state = TextFieldState(text, TextRange(selectionStart, selectionEnd))
+
+        val result = state.applyChange { replace(selection.min, selection.max, "") }
+
+        assertEquals("$npub three", result)
+    }
+
+    @Test
+    fun mentionFreeStaleBackspaceShape_passesThrough() {
+        val state = TextFieldState("hello world ")
+
+        state.backspace()
+        state.backspace()
+        val result = state.applyChange { replace(5, 6, "") }
+
+        assertEquals("helloworl", result)
     }
 }

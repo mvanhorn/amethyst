@@ -50,6 +50,11 @@ internal val MENTION_REGEX = Regex("(?:@|nostr:)(?:npub1[a-z0-9]{58}|nprofile1[a
  *  - Pure delete that fully covers a mention (the user removed the chip).
  *  - A change whose range covers more than just the mention (select-all + type,
  *    select-paragraph + paste, etc.) — treated as deliberate broader edit.
+ *
+ * Some legacy AOSP-derived IMEs also report a backward deletion against an
+ * earlier separator after a mention has changed the displayed text length. A
+ * collapsed caret makes that stale range distinguishable from an explicit
+ * selection, so only the inconsistent deletion is reverted.
  */
 @OptIn(ExperimentalFoundationApi::class)
 object MentionPreservingInputTransformation : InputTransformation {
@@ -61,8 +66,29 @@ object MentionPreservingInputTransformation : InputTransformation {
         // Cheap gate — most keystrokes happen in mention-free text.
         if (!original.contains("npub1") && !original.contains("nprofile1")) return
 
+        val mentions = MENTION_REGEX.findAll(original).toList()
+        if (mentions.isEmpty()) return
+
+        val caret = originalSelection
+        val hasStaleSeparatorDeletion =
+            caret.min == caret.max &&
+                (0 until changeCount).any { i ->
+                    val origRange = changes.getOriginalRange(i)
+                    val origStart = origRange.min
+                    val origEnd = origRange.max
+                    val isPureDelete = origStart < origEnd && changes.getRange(i).length == 0
+                    val isEarlierThanCaret = origEnd < caret.min
+                    val deletesSeparator = (origStart until origEnd).any { original[it].isWhitespace() }
+                    isPureDelete && isEarlierThanCaret && deletesSeparator
+                }
+
+        if (hasStaleSeparatorDeletion) {
+            revertAllChanges()
+            return
+        }
+
         val touched =
-            MENTION_REGEX.findAll(original).firstOrNull { match ->
+            mentions.firstOrNull { match ->
                 val mStart = match.range.first
                 val mEndExclusive = match.range.last + 1
                 (0 until changeCount).any { i ->
